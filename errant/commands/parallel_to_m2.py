@@ -2,6 +2,8 @@ import argparse
 from contextlib import ExitStack
 import errant
 
+from tqdm import tqdm
+
 def main():
     # Parse command line args
     args = parse_args()
@@ -17,7 +19,9 @@ def main():
     with ExitStack() as stack:
         in_files = [stack.enter_context(open(i)) for i in [args.orig]+args.cor]
         # Process each line of all input files
-        for line in zip(*in_files):
+        labels = []
+        for line in tqdm(zip(*in_files)):
+            label = []
             # Get the original and all the corrected texts
             orig = line[0].strip()
             cors = line[1:]
@@ -26,13 +30,12 @@ def main():
             # Parse orig with spacy
             orig = annotator.parse(orig, args.tok)
             # Write orig to the output m2 file
-            out_m2.write(" ".join(["S"]+[token.text for token in orig])+"\n")
             # Loop through the corrected texts
             for cor_id, cor in enumerate(cors):
                 cor = cor.strip()
                 # If the texts are the same, write a noop edit
                 if orig.text.strip() == cor:
-                    out_m2.write(noop_edit(cor_id)+"\n")
+                    label.append(noop_edit(cor_id).split('|||')[1])
                 # Otherwise, do extra processing
                 else:
                     # Parse cor with spacy
@@ -42,9 +45,12 @@ def main():
                     # Loop through the edits
                     for edit in edits:
                         # Write the edit to the output m2 file
-                        out_m2.write(edit.to_m2(cor_id)+"\n")
+                        label.append(edit.to_m2(cor_id).split('|||')[1])
             # Write a newline when we have processed all corrections for each line
-            out_m2.write("\n")
+            labels.append(label)
+
+        for label in tqdm(labels):
+            out_m2.write(','.join(label) + '\n')
             
 #    pr.disable()
 #    pr.print_stats(sort="time")
@@ -93,3 +99,6 @@ def parse_args():
 # Output: A noop edit; i.e. text contains no edits
 def noop_edit(id=0):
     return "A -1 -1|||noop|||-NONE-|||REQUIRED|||-NONE-|||"+str(id)
+
+if __name__ == "__main__":
+    main()
