@@ -3,6 +3,9 @@ from contextlib import ExitStack
 import errant
 
 from tqdm import tqdm
+import pandas as pd
+
+from ipdb import set_trace
 
 def main():
     # Parse command line args
@@ -11,20 +14,20 @@ def main():
     # Load Errant
     annotator = errant.load("en")
     # Open output m2 file
-    out_m2 = open(args.out, "w")
+    out_m2 = open(args.output, "w")
 
     print("Processing parallel files...")
     # Process an arbitrary number of files line by line simultaneously. Python 3.3+
     # See https://tinyurl.com/y4cj4gth
     with ExitStack() as stack:
-        in_files = [stack.enter_context(open(i)) for i in [args.orig]+args.cor]
+        df = pd.read_csv(args.input, sep='\t', encoding='utf-8')
         # Process each line of all input files
         labels = []
-        for line in tqdm(zip(*in_files)):
+        for _,row in tqdm(df.iterrows()):
             label = []
             # Get the original and all the corrected texts
-            orig = line[0].strip()
-            cors = line[1:]
+            orig = row.base_sentence.lower()
+            cors = row.edited_sentence.lower()
             # Skip the line if orig is empty
             if not orig: continue
             # Parse orig with spacy
@@ -60,19 +63,13 @@ def parse_args():
     parser=argparse.ArgumentParser(
         description="Align parallel text files and extract and classify the edits.\n",
         formatter_class=argparse.RawTextHelpFormatter,
-        usage="%(prog)s [-h] [options] -orig ORIG -cor COR [COR ...] -out OUT")
+        usage="%(prog)s [-h] [options] -input INPUT -output OUTPUT")
     parser.add_argument(
-        "-orig",
+        "-input",
         help="The path to the original text file.",
         required=True)
     parser.add_argument(
-        "-cor",
-        help="The paths to >= 1 corrected text files.",
-        nargs="+",
-        default=[],
-        required=True)
-    parser.add_argument(
-        "-out", 
+        "-output", 
         help="The output filepath.",
         required=True)
     parser.add_argument(
