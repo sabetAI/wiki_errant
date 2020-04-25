@@ -5,7 +5,10 @@ import errant
 from tqdm import tqdm
 import pandas as pd
 
-from ipdb import set_trace
+from multiprocessing import Pool
+from functools import partial
+
+from utils import split, merge, label_edits
 
 def main():
     # Parse command line args
@@ -14,45 +17,24 @@ def main():
     # Load Errant
     annotator = errant.load("en")
     # Open output m2 file
-    out_m2 = open(args.output, "w")
+    out_m2 = open(args.out, "w")
 
     print("Processing parallel files...")
     # Process an arbitrary number of files line by line simultaneously. Python 3.3+
     # See https://tinyurl.com/y4cj4gth
     with ExitStack() as stack:
-        df = pd.read_csv(args.input, sep='\t', encoding='utf-8')
-        # Process each line of all input files
-        labels = []
-        for _,row in tqdm(df.iterrows()):
-            label = []
-            # Get the original and all the corrected texts
-            orig = row.base_sentence.lower()
-            cors = row.edited_sentence.lower()
-            # Skip the line if orig is empty
-            if not orig: continue
-            # Parse orig with spacy
-            orig = annotator.parse(orig, args.tok)
-            # Write orig to the output m2 file
-            # Loop through the corrected texts
-            for cor_id, cor in enumerate(cors):
-                cor = cor.strip()
-                # If the texts are the same, write a noop edit
-                if orig.text.strip() == cor:
-                    label.append(noop_edit(cor_id).split('|||')[1])
-                # Otherwise, do extra processing
-                else:
-                    # Parse cor with spacy
-                    cor = annotator.parse(cor, args.tok)
-                    # Align the texts and extract and classify the edits
-                    edits = annotator.annotate(orig, cor, args.lev, args.merge)
-                    # Loop through the edits
-                    for edit in edits:
-                        # Write the edit to the output m2 file
-                        label.append(edit.to_m2(cor_id).split('|||')[1])
-            # Write a newline when we have processed all corrections for each line
-            labels.append(label)
+        orig_lines = stack.enter_context(open(args.orig, encoding='utf-8')).readlines()
+        cor_lines = stack.enter_context(open(args.cor[0], encoding='utf-8')).readlines()
+        pairs = list(zip(orig_lines, cor_lines))
+        batch_size = len(orig_lines) // args.n_procs
+        splits = split(pairs, batch_size)
+        partial_func = partial(label_edits, args=args)
 
-        for label in tqdm(labels):
+        with Pool(args.n_procs) as pool:
+            results = pool.map(partial_func, splits)
+        labeled = merge(results)
+
+        for label in tqdm(labeled):
             out_m2.write(','.join(label) + '\n')
             
 #    pr.disable()
@@ -63,15 +45,26 @@ def parse_args():
     parser=argparse.ArgumentParser(
         description="Align parallel text files and extract and classify the edits.\n",
         formatter_class=argparse.RawTextHelpFormatter,
-        usage="%(prog)s [-h] [options] -input INPUT -output OUTPUT")
+        usage="%(prog)s [-h] [options] -orig ORIG -cor COR [COR ...] -out OUT")
     parser.add_argument(
-        "-input",
+        "-orig",
         help="The path to the original text file.",
         required=True)
     parser.add_argument(
-        "-output", 
+        "-cor",
+        help="The paths to >= 1 corrected text files.",
+        nargs="+",
+        default=[],
+        required=True)
+    parser.add_argument(
+        "-out", 
         help="The output filepath.",
         required=True)
+    parser.add_argument(
+        "-n_procs", 
+        type=int,
+        help="N procs for multiprocessing",
+        default = 60) 
     parser.add_argument(
         "-tok", 
         help="Word tokenise the text using spacy (default: False).",
